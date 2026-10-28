@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SealedCase — sealed-bid auctions on BOT Chain</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
+<style>
+/* ============================================================================
+   DARK MODE — OLED PURE BLACK. True #000 canvas, hairline 1px dividers,
+   high-contrast white type, one neon highlight. Master–detail: a scrolling
+   case rail on the left, the selected case filling the pane on the right.
+   ========================================================================== */
+:root{
+  --bg:#000000;
+  --line:#1c1c1e;
+  --line-2:#2c2c2e;
+  --fg:#f5f5f7;
+  --mut:#8a8a8f;
+  --mut-2:#5a5a60;
+  --neon:#30e3a0;
+  --hot:#ff453a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:'IBM Plex Mono',monospace}
+
+/* ---------- top line ---------- */
+.topline{display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  padding:14px 22px;border-bottom:1px solid var(--line)}
+.topline .mark{font-weight:600;font-size:17px;letter-spacing:-.01em}
+.topline .mark b{color:var(--neon);font-weight:600}
+.topline .sp{margin-left:auto}
+.kv{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--mut-2);letter-spacing:.02em}
+.kv b{color:var(--fg);font-weight:400}
+.kv.live b{color:var(--neon)}
+
+button{
+  font-family:'IBM Plex Sans',sans-serif;font-weight:500;font-size:13px;cursor:pointer;
+  background:transparent;color:var(--fg);border:1px solid var(--line-2);padding:7px 14px;border-radius:7px;
+  transition:.12s
+}
+button:hover:not(:disabled){border-color:var(--neon);color:var(--neon)}
+button:disabled{opacity:.3;cursor:not-allowed}
+button.fill{background:var(--neon);border-color:var(--neon);color:#00130c;font-weight:600}
+button.fill:hover:not(:disabled){filter:brightness(1.1);color:#00130c}
+button.danger{border-color:#45211f;color:var(--hot)}
+button.danger:hover:not(:disabled){border-color:var(--hot)}
+button.sm{font-size:12px;padding:5px 11px}
+
+/* ---------- master / detail ---------- */
+.split{display:grid;grid-template-columns:316px 1fr;min-height:calc(100vh - 53px)}
+@media(max-width:900px){.split{grid-template-columns:1fr}}
+
+.rail{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+@media(max-width:900px){.rail{border-right:none;border-bottom:1px solid var(--line);max-height:46vh}}
+.railhead{padding:13px 18px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:10px}
+.railhead span{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--mut-2)}
+.raillist{overflow-y:auto;flex:1}
+.raillist::-webkit-scrollbar{width:8px}
+.raillist::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
+
+.caseitem{display:grid;grid-template-columns:30px 1fr auto;gap:11px;align-items:center;
+  padding:13px 18px;border-bottom:1px solid var(--line);cursor:pointer;transition:.1s}
+.caseitem:hover{background:#0b0b0c}
+.caseitem.on{background:#0e0e10;box-shadow:inset 2px 0 0 var(--neon)}
+.glyph{width:26px;height:26px;border-radius:50%;border:1px solid var(--line-2);
+  display:grid;place-items:center;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mut)}
+.caseitem.p0 .glyph{border-color:#2f4f6b;color:#6fb6ff}
+.caseitem.p1 .glyph{border-color:#4a4320;color:#ffd54a}
+.caseitem.p2 .glyph{border-color:#1f4a38;color:var(--neon)}
+.caseitem.p3 .glyph{border-color:var(--line-2);color:var(--mut-2)}
+.caseitem .nm{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.caseitem .sub{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--mut-2)}
+.caseitem .amt{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--mut);text-align:right}
+
+/* ---------- detail pane ---------- */
+.detail{padding:28px 34px 60px;min-width:0}
+@media(max-width:600px){.detail{padding:22px 18px 50px}}
+.detail h1{font-size:clamp(28px,4vw,44px);font-weight:600;letter-spacing:-.02em;margin:0;line-height:1.1}
+.detail .cid{font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--mut-2);margin-bottom:10px}
+
+/* phase bar as four hairline segments */
+.phases{display:flex;gap:1px;background:var(--line);margin:26px 0;border-radius:2px;overflow:hidden}
+.phases div{flex:1;background:#09090a;padding:11px 12px;font-family:'IBM Plex Mono',monospace;
+  font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);text-align:center}
+.phases div.done{color:var(--mut)}
+.phases div.on{background:var(--neon);color:#00130c}
+
+/* data table, the backbone of this layout */
+table{width:100%;border-collapse:collapse;margin-top:6px}
+th,td{text-align:left;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+th{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--mut-2);font-weight:400;width:40%}
+td{font-family:'IBM Plex Mono',monospace;color:var(--fg)}
+td.neon{color:var(--neon)}
+td.mut{color:var(--mut)}
+
+.verdict{margin-top:24px;padding:14px 16px;border:1px solid var(--line-2);border-radius:8px;
+  font-size:14px;color:var(--mut)}
+.verdict b{color:var(--fg);font-weight:600}
+.verdict.good{border-color:#1f4a38}
+.verdict.bad{border-color:#45211f}
+
+.acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:26px}
+input,select{background:#0a0a0b;border:1px solid var(--line-2);border-radius:7px;color:var(--fg);
+  padding:9px 12px;font-family:'IBM Plex Mono',monospace;font-size:13px;min-width:0}
+input:focus,select:focus{outline:none;border-color:var(--neon)}
+label{display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--mut-2);margin-bottom:6px}
+
+.section{margin-top:44px;padding-top:26px;border-top:1px solid var(--line)}
+.section h2{font-size:17px;font-weight:600;margin:0 0 4px}
+.section p{color:var(--mut);font-size:13.5px;margin:0 0 16px;max-width:62ch}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;align-items:end}
+
+.note{font-size:12.5px;color:var(--mut-2);margin-top:14px;max-width:62ch;line-height:1.7}
+.empty{color:var(--mut-2);font-family:'IBM Plex Mono',monospace;font-size:12.5px;padding:40px 0}
+
+#toast{position:fixed;left:22px;bottom:22px;transform:translateY(180%);
+  background:#0d0d0f;border:1px solid var(--neon);color:var(--fg);padding:11px 17px;border-radius:9px;
+  font-family:'IBM Plex Mono',monospace;font-size:12.5px;max-width:min(88vw,420px);
+  transition:transform .22s;z-index:60}
+#toast.show{transform:translateY(0)}
+#toast.bad{border-color:var(--hot);color:#ffb3ae}
+
+/* ===== BOT Chain ecosystem footer (KPI 5) ===== */
+footer.bc-foot{display:block;background:#000;border-top:1px solid #1c1c1e}
+.bc-foot-grid{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:22px;
+  padding:20px 22px;border-bottom:1px solid #1c1c1e}
+@media(max-width:720px){.bc-foot-grid{grid-template-columns:1fr;gap:14px}}
+.bc-foot .bc-logo{border:1px solid #2c2c2e;border-radius:8px;padding:9px 13px;background:#0a0a0b}
+.bc-foot .bc-id{font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:17px;
+  color:#f5f5f7;letter-spacing:-.01em}
+.bc-foot .bc-id small{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;
+  font-weight:400;letter-spacing:.16em;text-transform:uppercase;color:#5a5a60;margin-top:3px}
+.bc-foot .bc-links{display:flex;gap:9px;flex-wrap:wrap}
+.bc-foot .bc-links a{font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:#f5f5f7;text-decoration:none;padding:7px 14px;
+  border:1px solid #2c2c2e;border-radius:7px}
+.bc-foot .bc-links a:hover{border-color:#30e3a0;color:#30e3a0}
+.bc-foot .bc-meta{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:#5a5a60;padding:12px 22px;
+  display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.bc-foot .bc-meta b{color:#30e3a0;font-weight:400}
+</style>
+</head>
+<body>
+
+<div class="topline">
+  <div class="mark">Sealed<b>Case</b></div>
+  <span class="kv">NET <b id="k-net">—</b></span>
+  <span class="kv">CTR <b id="k-ctr">not set</b></span>
+  <span class="kv">ACCT <b id="k-acct">—</b></span>
+  <span class="kv live">BAL <b id="k-bal">—</b></span>
+  <span class="kv">FEE <b id="k-fee">—</b></span>
+  <span class="sp"></span>
+  <button class="sm" id="btn-withdraw">Withdraw</button>
+  <button class="sm" id="btn-refresh">Refresh</button>
+  <button class="sm fill" id="btn-connect">Connect</button>
+</div>
+
+<div class="split">
+  <aside class="rail">
+    <div class="railhead">
+      <span id="rail-count">cases</span>
+      <button class="sm" id="btn-new">+ New</button>
+    </div>
+    <div class="raillist" id="rail"></div>
+  </aside>
+
+  <main class="detail" id="detail"></main>
+</div>
+
+
+<!-- ===== BOT Chain ecosystem footer (KPI 5) ===== -->
+<footer class="bc-foot">
+  <div class="bc-foot-grid">
+    <div class="bc-logo" aria-hidden="true"><svg viewBox="0 0 63.63 100" xmlns="http://www.w3.org/2000/svg" style="width:19px;height:30px;display:block"><path fill="#00A67E" d="M31.67 99.95 L0 82.48 L0.11 63.74 L47.01 90.60 L47.01 73.19 L15.98 55.32 L15.95 36.49 L46.92 53.57 L47.39 36.82 L15.96 17.81 L16.26 0 L63.06 27.02 L62.82 46.20 L47.86 54.67 L62.85 63.00 L63.62 81.42 Z"/></svg></div>
+    <div class="bc-id">BOT Chain<small>Part of the ecosystem</small></div>
+    <div class="bc-links">
+      <a href="https://botchain.ai" target="_blank" rel="noopener noreferrer">botchain.ai</a>
+      <a id="bc-explorer" href="https://scan.botchain.ai" target="_blank" rel="noopener noreferrer">Explorer</a>
+    </div>
+  </div>
+  <div class="bc-meta">
+    <span>&copy; 2026 <b>BOT Chain</b> &mdash; EVM-compatible Layer 1</span>
+  </div>
+</footer>
+
+<div id="toast"></div>
+
+<script>
+/* ============================================================================
+   CONTRACT + NETWORK CONFIG
+
+   Paste the deployed address below. Defaults to BOT Chain TESTNET.
+
+   TESTNET -> MAINNET: swap these five values together, never some of them.
+     CONTRACT_ADDRESS  -> the mainnet address
+     chainId           -> "0x2A5"
+     chainName         -> "BOT Chain"
+     rpcUrls           -> ["https://rpc.botchain.ai"]
+     blockExplorerUrls -> ["https://scan.botchain.ai"]
+   ...and set label -> "MAINNET" so the badge reads correctly.
+   ========================================================================== */
+const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+const NETWORK = {
+  chainId: "0x3C8",                              // 968 testnet  | mainnet: "0x2A5"
+  chainIdDec: 968,                               // reference only, not shown on the page | mainnet: 677
+  chainName: "BOT Chain Testnet",                //              | mainnet: "BOT Chain"
+  rpcUrls: ["https://rpc.bohr.life"],            //              | mainnet: ["https://rpc.botchain.ai"]
+  blockExplorerUrls: ["https://scan.bohr.life"], //              | mainnet: ["https://scan.botchain.ai"]
+  nativeCurrency: { name: "BOT", symbol: "BOT", decimals: 18 },
+  label: "TESTNET"                               //              | mainnet: "MAINNET"
+};
+
+const ABI = [
+  "function createAuction(string item, uint256 reservePrice, uint256 deposit, uint64 commitSecs, uint64 revealSecs) returns (uint256)",
+  "function commitBid(uint256 id, bytes32 commitment) payable",
+  "function revealBid(uint256 id, uint256 amount, bytes32 salt)",
+  "function settleAuction(uint256 id)",
+  "function payWinningBid(uint256 id) payable",
+  "function claimDefault(uint256 id)",
+  "function withdraw()",
+  "function auctionCount() view returns (uint256)",
+  "function getAuction(uint256 id) view returns (tuple(address seller,uint256 reservePrice,uint256 deposit,uint64 commitEndsAt,uint64 revealEndsAt,uint64 payEndsAt,address highBidder,uint256 highBid,uint256 secondBid,uint256 clearingPrice,uint32 bidCount,uint32 revealCount,bool settled,bool paid,uint8 outcome,string item))",
+  "function balanceOf(address who) view returns (uint256)",
+  "function hasCommitted(uint256 id, address who) view returns (bool)",
+  "function hasRevealed(uint256 id, address who) view returns (bool)",
+  "function phaseOf(uint256 id) view returns (uint8)",
+  "function getRecent(uint256 limit) view returns (uint256[])",
+  "function lockedTotal() view returns (uint256)",
+  "function feeBps() view returns (uint16)"
+];
+
+const ZERO = "0x0000000000000000000000000000000000000000";
+const STORE = "sealedcase.envelopes.v1";
+const $ = (id) => document.getElementById(id);
+let provider, signer, account, contract, readContract;
+let cases = [], selected = null, composing = false;
+
+function toast(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (bad ? " bad" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.className = ""), 4800);
+}
+const short = (a) => (a && a !== ZERO ? a.slice(0, 6) + "…" + a.slice(-4) : "—");
+const fmt = (wei) => {
+  const n = Number(ethers.formatEther(wei));
+  return (n >= 1 ? n.toFixed(3) : n.toFixed(4)).replace(/0+$/, "").replace(/\.$/, "");
+};
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function reason(e) {
+  const m = (e && (e.shortMessage || e.reason || e.message)) || "Transaction failed";
+  return String(m).replace(/^execution reverted:?\s*/i, "").slice(0, 150);
+}
+function left(ts) {
+  const s = ts - Math.floor(Date.now() / 1000);
+  if (s <= 0) return "closed";
+  const d = Math.floor(s / 86400);
+  if (d >= 1) return d + "d " + Math.floor((s % 86400) / 3600) + "h";
+  const h = Math.floor(s / 3600);
+  if (h >= 1) return h + "h " + Math.floor((s % 3600) / 60) + "m";
+  return Math.max(1, Math.floor(s / 60)) + "m";
+}
+
+/* ------------------------------------------------- envelopes (local only) */
+function loadEnvelopes() {
+  try { return JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { return {}; }
+}
+function saveEnvelope(id, amount, salt) {
+  try {
+    const all = loadEnvelopes();
+    all[(account || "x") + ":" + id] = { amount, salt };
+    localStorage.setItem(STORE, JSON.stringify(all));
+  } catch (e) { toast("Could not store the envelope locally — write the salt down.", true); }
+}
+const getEnvelope = (id) => loadEnvelopes()[(account || "x") + ":" + id];
+
+/* ---------------------------------------------------------------- wallet */
+function readOnly() {
+  try {
+    const p = new ethers.JsonRpcProvider(NETWORK.rpcUrls[0]);
+    readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, p);
+  } catch (e) { /* no read-only view */ }
+}
+async function connect() {
+  if (!window.ethereum) { toast("No wallet found. Install MetaMask.", true); return; }
+  try {
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    await ensureChain();
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    $("k-acct").textContent = short(account);
+    $("btn-connect").textContent = "Connected";
+    await load();
+  } catch (e) { toast(reason(e), true); }
+}
+async function ensureChain() {
+  const current = await window.ethereum.request({ method: "eth_chainId" });
+  if (current.toLowerCase() === NETWORK.chainId.toLowerCase()) return;
+  try {
+    await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: NETWORK.chainId }] });
+  } catch (err) {
+    if (err.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: NETWORK.chainId, chainName: NETWORK.chainName, rpcUrls: NETWORK.rpcUrls,
+          blockExplorerUrls: NETWORK.blockExplorerUrls, nativeCurrency: NETWORK.nativeCurrency
+        }]
+      });
+    } else throw err;
+  }
+}
+
+/* ------------------------------------------------------------------ load */
+async function load() {
+  const c = contract || readContract;
+  if (!c || CONTRACT_ADDRESS === ZERO) { renderRail(); renderDetail(); return; }
+  try {
+    const [n, locked, fee] = await Promise.all([c.auctionCount(), c.lockedTotal(), c.feeBps()]);
+    $("rail-count").textContent = n + " cases · " + fmt(locked) + " BOT held";
+    $("k-fee").textContent = (Number(fee) / 100) + "%";
+    $("k-bal").textContent = account ? fmt(await c.balanceOf(account)) + " BOT" : "—";
+
+    const ids = await c.getRecent(40n);
+    cases = [];
+    for (const id of ids) {
+      const a = await c.getAuction(id);
+      const phase = Number(await c.phaseOf(id));
+      let committed = false, revealed = false;
+      if (account) {
+        committed = await c.hasCommitted(id, account);
+        revealed = await c.hasRevealed(id, account);
+      }
+      cases.push({ id, a, phase, committed, revealed });
+    }
+    if (selected === null && cases.length) selected = String(cases[0].id);
+    renderRail();
+    renderDetail();
+  } catch (e) {
+    toast("Could not read the contract. Check the address and network.", true);
+  }
+}
+
+/* ---------------------------------------------------------------- render */
+const PHASE_GLYPH = ["◴", "◐", "◍", "●"];
+const OUTCOME = ["awaiting payment", "sold", "unsold", "defaulted"];
+
+function renderRail() {
+  const el = $("rail");
+  if (CONTRACT_ADDRESS === ZERO) {
+    el.innerHTML = '<div class="empty" style="padding:24px 18px">NO CONTRACT ADDRESS SET</div>';
+    return;
+  }
+  if (!cases.length) { el.innerHTML = '<div class="empty" style="padding:24px 18px">NO CASES FILED</div>'; return; }
+  el.innerHTML = cases.map(({ id, a, phase }) => {
+    return '<div class="caseitem p' + phase + (String(id) === String(selected) && !composing ? " on" : "") +
+      '" data-case="' + id + '">' +
+      '<div class="glyph">' + PHASE_GLYPH[phase] + "</div>" +
+      '<div><div class="nm">' + esc(a.item) + '</div>' +
+        '<div class="sub">#' + id + " · " + a.bidCount + " sealed · " + a.revealCount + " open</div></div>" +
+      '<div class="amt">' + fmt(a.settled ? a.clearingPrice : a.reservePrice) + "</div>" +
+    "</div>";
+  }).join("");
+}
+
+function renderDetail() {
+  const el = $("detail");
+  if (CONTRACT_ADDRESS === ZERO) {
+    el.innerHTML = '<div class="cid">not configured</div><h1>No contract address</h1>' +
+      '<p class="note">Deploy SealedCase, then paste the address into <span class="mono">CONTRACT_ADDRESS</span> in this file.</p>';
+    return;
+  }
+  if (composing || !cases.length) { renderCompose(); return; }
+
+  const row = cases.find((x) => String(x.id) === String(selected)) || cases[0];
+  const { id, a, phase, committed, revealed } = row;
+  const now = Math.floor(Date.now() / 1000);
+  const outcome = Number(a.outcome);
+  const mineSeller = account && a.seller.toLowerCase() === account.toLowerCase();
+  const winner = account && a.highBidder.toLowerCase() === account.toLowerCase();
+  const env = getEnvelope(id);
+
+  const phases = ["Commit", "Reveal", "Settle", "Closed"]
+    .map((lbl, i) => '<div class="' + (i === phase ? "on" : i < phase ? "done" : "") + '">' + lbl + "</div>")
+    .join("");
+
+  let acts = "";
+  if (phase === 0 && !committed && !mineSeller) {
+    acts += '<input id="bid-in" type="number" step="0.01" min="0" placeholder="your bid in BOT" />' +
+            '<button class="fill" id="do-seal">Seal bid</button>';
+  }
+  if (phase === 1 && committed && !revealed) {
+    acts += '<button class="fill" id="do-reveal">Open envelope' + (env ? " (" + env.amount + " BOT)" : "") + "</button>";
+  }
+  if (phase === 2) acts += '<button class="fill" id="do-settle">Settle case</button>';
+  if (a.settled && outcome === 0 && winner) {
+    const owed = a.clearingPrice > a.deposit ? a.clearingPrice - a.deposit : 0n;
+    acts += '<button class="fill" id="do-pay" data-owed="' + owed + '">Pay ' + fmt(owed) + " BOT</button>";
+  }
+  if (a.settled && outcome === 0 && Number(a.payEndsAt) > 0 && now > Number(a.payEndsAt)) {
+    acts += '<button class="danger" id="do-default">Claim default</button>';
+  }
+
+  let verdict = "", vclass = "";
+  if (a.settled) {
+    if (outcome === 1) { verdict = "<b>Sold</b> to " + short(a.highBidder) + " at " + fmt(a.clearingPrice) + " BOT — the second price, not the first."; vclass = "good"; }
+    else if (outcome === 2) verdict = "<b>Unsold.</b> Nothing reached the reserve. Every revealed deposit went back.";
+    else if (outcome === 3) { verdict = "<b>Defaulted.</b> The winner never paid; the deposit went to the seller."; vclass = "bad"; }
+    else verdict = "<b>Awaiting payment</b> from " + short(a.highBidder) + " — " + fmt(a.clearingPrice) + " BOT due by " + left(Number(a.payEndsAt)) + ".";
+  }
+
+  el.innerHTML =
+    '<div class="cid">Case ' + String(id).padStart(4, "0") + " · seller " + short(a.seller) + "</div>" +
+    "<h1>" + esc(a.item) + "</h1>" +
+    '<div class="phases">' + phases + "</div>" +
+    "<table>" +
+      row2("Reserve", fmt(a.reservePrice) + " BOT") +
+      row2("Deposit, identical for every bidder", fmt(a.deposit) + " BOT") +
+      row2("Envelopes sealed", String(a.bidCount)) +
+      row2("Envelopes opened", String(a.revealCount), a.bidCount > a.revealCount && phase > 1 ? "mut" : "") +
+      row2("Commit window ends", left(Number(a.commitEndsAt))) +
+      row2("Reveal window ends", left(Number(a.revealEndsAt))) +
+      (a.settled ? row2("Clearing price", fmt(a.clearingPrice) + " BOT", "neon") : "") +
+      (a.settled ? row2("Outcome", OUTCOME[outcome]) : "") +
+      (account ? row2("Your envelope", committed ? (revealed ? "opened" : "sealed, not opened") : "none") : "") +
+    "</table>" +
+    (verdict ? '<div class="verdict ' + vclass + '">' + verdict + "</div>" : "") +
+    (acts ? '<div class="acts">' + acts + "</div>" : "") +
+    '<p class="note">Your amount and salt are sealed in this browser only. Clear your site data before revealing and the bid is lost — the deposit goes to the seller. A bidder who never opens their envelope forfeits the deposit by design.</p>';
+
+  wireDetail(row);
+}
+
+function row2(k, v, cls) {
+  return "<tr><th>" + k + '</th><td class="' + (cls || "") + '">' + v + "</td></tr>";
+}
+
+function renderCompose() {
+  $("detail").innerHTML =
+    '<div class="cid">New case</div><h1>File a sealed-bid auction</h1>' +
+    '<div class="section" style="border:none;margin-top:22px;padding-top:0">' +
+      "<p>Every bidder posts the same deposit, so the amount staked gives nothing away about what is in the envelope.</p>" +
+      '<div class="grid4">' +
+        '<div style="grid-column:1/-1"><label for="f-item">Item</label>' +
+          '<input id="f-item" maxlength="72" placeholder="Brass desk lamp, 1940s" style="width:100%" /></div>' +
+        '<div><label for="f-reserve">Reserve BOT</label><input id="f-reserve" type="number" min="0" step="0.01" value="1" /></div>' +
+        '<div><label for="f-deposit">Deposit BOT</label><input id="f-deposit" type="number" min="0.001" step="0.01" value="0.2" /></div>' +
+        '<div><label for="f-commit">Commit window</label><select id="f-commit">' +
+          '<option value="3600">1 hour</option><option value="86400" selected>1 day</option>' +
+          '<option value="259200">3 days</option><option value="604800">7 days</option></select></div>' +
+        '<div><label for="f-reveal">Reveal window</label><select id="f-reveal">' +
+          '<option value="3600">1 hour</option><option value="86400" selected>1 day</option>' +
+          '<option value="259200">3 days</option></select></div>' +
+      "</div>" +
+      '<div class="acts"><button class="fill" id="do-create">File the case</button>' +
+      (cases.length ? '<button id="do-cancel">Back to cases</button>' : "") + "</div>" +
+    "</div>";
+
+  $("do-create").onclick = () => {
+    const item = $("f-item").value.trim();
+    const reserve = $("f-reserve").value || "0";
+    const deposit = $("f-deposit").value;
+    if (!item) { toast("Say what is being sold.", true); return; }
+    if (!(Number(deposit) >= 0.001)) { toast("The deposit must be at least 0.001 BOT.", true); return; }
+    send("Filing the case", () =>
+      contract.createAuction(item, ethers.parseEther(reserve), ethers.parseEther(deposit),
+        $("f-commit").value, $("f-reveal").value)
+    ).then(() => { composing = false; });
+  };
+  const cancel = $("do-cancel");
+  if (cancel) cancel.onclick = () => { composing = false; renderRail(); renderDetail(); };
+}
+
+function wireDetail(row) {
+  const { id, a } = row;
+  const seal = $("do-seal");
+  if (seal) seal.onclick = () => {
+    const amount = ($("bid-in").value || "").trim();
+    if (!(Number(amount) > 0)) { toast("Enter your bid.", true); return; }
+    if (!account) { toast("Connect a wallet first.", true); return; }
+    const salt = ethers.hexlify(ethers.randomBytes(32));
+    const wei = ethers.parseEther(amount);
+    const commitment = ethers.solidityPackedKeccak256(
+      ["uint256", "uint256", "bytes32", "address"], [id, wei, salt, account]
+    );
+    saveEnvelope(id, amount, salt);
+    send("Sealing the bid", () => contract.commitBid(id, commitment, { value: a.deposit }));
+  };
+
+  const rev = $("do-reveal");
+  if (rev) rev.onclick = () => {
+    let env = getEnvelope(id);
+    if (!env) {
+      const amount = prompt("Envelope not found in this browser. Bid amount in BOT?");
+      const salt = prompt("And the salt (0x…)?");
+      if (!amount || !salt) return;
+      env = { amount, salt };
+    }
+    send("Opening the envelope", () =>
+      contract.revealBid(id, ethers.parseEther(String(env.amount)), env.salt));
+  };
+
+  const st = $("do-settle");
+  if (st) st.onclick = () => send("Settling the case", () => contract.settleAuction(id));
+  const pay = $("do-pay");
+  if (pay) pay.onclick = () => send("Paying", () => contract.payWinningBid(id, { value: pay.dataset.owed }));
+  const def = $("do-default");
+  if (def) def.onclick = () => send("Claiming the default", () => contract.claimDefault(id));
+}
+
+/* --------------------------------------------------------------- actions */
+async function send(label, fn) {
+  if (!contract) { toast("Connect a wallet first.", true); return; }
+  try {
+    toast(label + "…");
+    const tx = await fn();
+    await tx.wait();
+    toast(label + " confirmed");
+    await load();
+  } catch (e) { toast(reason(e), true); }
+}
+
+$("rail").addEventListener("click", (ev) => {
+  const item = ev.target.closest("[data-case]");
+  if (!item) return;
+  selected = item.dataset.case;
+  composing = false;
+  renderRail();
+  renderDetail();
+});
+
+$("btn-new").onclick = () => { composing = true; renderRail(); renderCompose(); };
+$("btn-withdraw").onclick = () => send("Withdrawing", () => contract.withdraw());
+$("btn-connect").onclick = connect;
+$("btn-refresh").onclick = load;
+
+/* ------------------------------------------------------------------ boot */
+$("k-net").textContent = NETWORK.chainName + " · " + NETWORK.label;
+if (CONTRACT_ADDRESS !== ZERO) $("k-ctr").textContent = short(CONTRACT_ADDRESS);
+if (window.ethereum) {
+  window.ethereum.on("accountsChanged", () => location.reload());
+  window.ethereum.on("chainChanged", () => location.reload());
+}
+readOnly();
+load();
+
+/* ---- BOT Chain ecosystem footer: follows the NETWORK config above ---- */
+(function () {
+  var ex = document.getElementById("bc-explorer");
+  if (ex) ex.href = NETWORK.blockExplorerUrls[0];
+})();
+</script>
+</body>
+</html>
